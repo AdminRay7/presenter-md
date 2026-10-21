@@ -5,18 +5,68 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>303-XMD Dashboard</title>
     <style>
-        body { font-family: sans-serif; background: #111; color: #fff; text-align: center; padding-top: 50px; }
-        .card { background: #222; padding: 20px; border-radius: 10px; display: inline-block; border: 1px solid #00ffcc; }
-        h1 { color: #00ffcc; }
-        p { color: #aaa; }
+        body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
+        .card { background: #1a1a1a; padding: 40px; border-radius: 12px; border: 1px solid #333; text-align: center; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        h1 { color: #00ffcc; margin-top: 0; }
+        p { color: #888; font-size: 14px; }
+        input { width: 90%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; outline: none; }
+        input:focus { border-color: #00ffcc; }
+        button { width: 100%; padding: 12px; border-radius: 6px; border: none; background: #00ffcc; color: #000; font-weight: bold; cursor: pointer; transition: 0.3s; }
+        button:hover { background: #00ccaa; }
+        .code-box { margin-top: 20px; padding: 15px; background: #222; border: 1px dashed #00ffcc; border-radius: 6px; font-size: 24px; font-weight: bold; letter-spacing: 2px; color: #00ffcc; display: none; }
+        .status { margin-top: 15px; font-size: 14px; font-weight: bold; color: #ffaa00; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1>303-XMD</h1>
-        <p>The Last Key</p>
-        <h3 style="color: #00ff00;">System Online</h3>
-        <p>Bot is actively listening to WhatsApp messages.</p>
+        <p>The Last Key - Web Linker</p>
+        
+        <div id="pair-section">
+            <input type="text" id="phone" placeholder="e.g., 254794376595" autocomplete="off">
+            <button onclick="getCode()">Get Pairing Code</button>
+        </div>
+        
+        <div class="status" id="status-msg"></div>
+        <div class="code-box" id="code-display"></div>
     </div>
+
+    <script>
+        async function getCode() {
+            const phone = document.getElementById('phone').value;
+            const statusMsg = document.getElementById('status-msg');
+            const codeBox = document.getElementById('code-display');
+
+            if(!phone) {
+                statusMsg.innerText = "Please enter a phone number.";
+                return;
+            }
+
+            statusMsg.innerText = "Generating code, please wait...";
+            statusMsg.style.color = "#ffaa00";
+
+            try {
+                const res = await fetch('/pair', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone })
+                });
+                const data = await res.json();
+
+                if(data.code) {
+                    statusMsg.innerText = "Link via WhatsApp > Linked Devices.";
+                    statusMsg.style.color = "#00ff00";
+                    codeBox.innerText = data.code;
+                    codeBox.style.display = "block";
+                } else {
+                    statusMsg.innerText = data.error || "Failed to get code.";
+                    statusMsg.style.color = "#ff0000";
+                }
+            } catch (err) {
+                statusMsg.innerText = "Server error.";
+                statusMsg.style.color = "#ff0000";
+            }
+        }
+    </script>
 </body>
 </html>
