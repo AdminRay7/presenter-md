@@ -1,4 +1,3 @@
-// ── FIX DNS ERROR ──
 import dns from 'dns';
 dns.setServers(['8.8.8.8', '8.8.4.4']); 
 
@@ -20,13 +19,14 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── 1. START WEB DASHBOARD ──
+// ── 1. START WEB DASHBOARD (Port 5000, bound to 0.0.0.0) ──
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/status', (req, res) => res.json({ status: "online", bot: config.botName }));
-app.listen(PORT, () => {
-    console.log(chalk.cyan(`[+] Web Dashboard running on http://localhost:${PORT}`));
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(chalk.cyan(`[+] Web Dashboard running on http://0.0.0.0:${PORT}`));
 });
 
 // ── 2. CONNECT DATABASE ──
@@ -51,9 +51,9 @@ async function startBot() {
     // Pairing Code Method
     if (!sock.authState.creds.registered) {
         console.log(chalk.yellow('\n[!] WhatsApp is not linked.'));
-        const phoneNumber = await question(chalk.cyan('Enter your WhatsApp number (with country code, no + or spaces, e.g., 254794376595): '));
+        const phoneNumber = await question(chalk.cyan('Enter your WhatsApp number (e.g., 254794376595): '));
         
-        // Delay to ensure connection is ready
+        // Small delay to ensure the socket is fully ready
         setTimeout(async () => {
             try {
                 const code = await sock.requestPairingCode(phoneNumber.trim());
@@ -75,7 +75,7 @@ async function startBot() {
         } else if (connection === 'open') {
             console.log(chalk.green(`\n[+] ${config.botName} Connected Successfully!`));
             console.log(chalk.yellow(`[+] Owner: ${config.ownerName}`));
-            rl.close(); // Close the prompt when connected
+            rl.close(); 
         }
     });
 
