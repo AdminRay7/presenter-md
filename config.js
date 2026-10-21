@@ -9,5 +9,8 @@ export const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    mongoURI: "mongodb+srv://ryanAdmin:3063ERay@cluster0.iy1gadk.mongodb.net/?appName=Cluster0"
+    
+    // If DNS fix worked, keep the SRV string. 
+    // If it still fails, copy the "Standard Connection String" (mongodb://...) from Atlas.
+    mongoURI: "mongodb+srv://ryanAdmin:3063ERay@cluster0.iy1gadk.mongodb.net/?appName=Cluster0" 
 };
