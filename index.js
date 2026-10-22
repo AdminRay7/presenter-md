@@ -76,7 +76,7 @@ async function bootSocket(sessionId, session) {
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
     
-    // Fetch the absolute latest version to prevent "Couldn't link device"
+    // THIS IS THE MAGIC LINE FOR PAIRING
     const { version } = await fetchLatestWaWebVersion();
     console.log(chalk.cyan(`[+] [${sessionId}] WA version: ${JSON.stringify(version)}`));
 
@@ -199,13 +199,26 @@ app.get("/api/pair", async (req, res) => {
     }
 });
 
-// ── LAUNCH SERVER (PORT 3000) ──
+// ── LAUNCH SERVER (Heroku Ready) ──
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
     try {
         await initMongo();
+        
+        // Auto-resume the session if it exists in MongoDB
+        const collection = db.collection("authState");
+        const hasSession = await collection.findOne({ _id: "main:creds" });
+        
+        if (hasSession) {
+            console.log(chalk.cyan(`[+] Found existing session in DB. Auto-connecting...`));
+            const session = { conn: null, socketReady: false, pairing: null, pairingNumber: null, startedAt: Date.now() };
+            global.sessions.set("main", session);
+            await bootSocket("main", session);
+        } else {
+            console.log(chalk.yellow(`[!] No session found. Please pair via the web dashboard.`));
+        }
     } catch (e) {
-        console.log(chalk.red(`[-] Failed to connect to DB. Waiting for manual pair.`));
+        console.log(chalk.red(`[-] Failed to start bot automatically.`));
     }
 });
