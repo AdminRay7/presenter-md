@@ -11,6 +11,8 @@ import pino from 'pino';
 import chalk from 'chalk';
 import express from 'express';
 import path from 'path';
+import https from 'https';
+import http from 'http';
 import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'url';
 
@@ -34,7 +36,7 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // ⚠️  Secrets come from env. Never hardcode credentials.
+    // ⚠️  Secret from env only. Never hardcode credentials.
     mongoURI: process.env.MONGO_URI,
 };
 
@@ -340,10 +342,25 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// ── HEROKU KEEP-ALIVE (prevents 30-min idle dyno sleep) ──
-if (process.env.HEROKU_APP_NAME) {
-    const selfUrl = process.env.BASE_URL || `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
-    setInterval(() => {
-        fetch(`${selfUrl}/health`).catch(() => {});
-    }, 20 * 60 * 1000); // every 20 min
+// ── HEROKU KEEP-ALIVE (native https — Node-version agnostic) ──
+if (process.env.HEROKU_APP_NAME || process.env.BASE_URL) {
+    const selfUrl = process.env.BASE_URL
+        || `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
+    const client = selfUrl.startsWith('https:') ? https : http;
+
+    const ping = () => {
+        const req = client.get(`${selfUrl}/health`, (res) => {
+            res.on('data', () => {});
+            res.on('end', () => {
+                if (res.statusCode >= 400)
+                    console.warn(chalk.yellow(`[keep-alive] /health -> ${res.statusCode}`));
+            });
+        });
+        req.on('error', (e) =>
+            console.warn(chalk.yellow(`[keep-alive] ping failed: ${e.message}`)));
+        req.setTimeout(15000, () => req.destroy());
+    };
+
+    setInterval(ping, 20 * 60 * 1000); // every 20 min
+    console.log(chalk.cyan(`[+] Keep-alive pinging ${selfUrl}/health every 20 min`));
 }
