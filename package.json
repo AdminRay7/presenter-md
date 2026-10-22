@@ -7,13 +7,6 @@
   "scripts": {
     "start": "node --max-old-space-size=400 --enable-source-maps --expose-gc index.js"
   },
-  "keywords": [
-    "whatsapp",
-    "bot",
-    "baileys",
-    "newsletter",
-    "303-xmd"
-  ],
   "author": "mr presenter",
   "license": "MIT",
   "dependencies": {
