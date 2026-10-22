@@ -5,8 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node --max-old-space-size=400 --enable-source-maps --expose-gc index.js",
-    "dev": "node --watch --max-old-space-size=400 --enable-source-maps --expose-gc index.js"
+    "start": "node --max-old-space-size=400 --enable-source-maps --expose-gc index.js"
   },
   "author": "mr presenter",
   "license": "MIT",
