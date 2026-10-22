@@ -37,6 +37,7 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
+    // Hardcoded fallback
     mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -49,7 +50,7 @@ process.on("uncaughtException", (e) => {
 });
 
 const app = express();
-app.use(express.json({ limit: "5mb" })); // Matching your working bot
+app.use(express.json({ limit: "5mb" }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── GLOBALS ──
@@ -86,23 +87,54 @@ async function initMongo() {
     }
 }
 
-// ── SOCKET BOOT ──
+// ── PAIRING (EXACT COPY OF YOUR WORKING BOT) ──
+async function requestPairingCodeForSession(sessionId, phoneNumber) {
+    return enqueuePairing(async () => {
+        await initMongo();
+        let session = global.sessions.get(sessionId);
+        if (session?.conn?.user) throw new Error("Session already paired");
+        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
+
+        if (!session) {
+            session = { conn: null, socketReady: false, pairing: null, pairingNumber: null, startedAt: Date.now(), welcomed: false };
+            global.sessions.set(sessionId, session);
+            await bootSocket(sessionId, session);
+        } else if (!session.conn) {
+            await bootSocket(sessionId, session);
+        }
+
+        const deadline = Date.now() + 30000;
+        while (!session.socketReady && Date.now() < deadline) await new Promise(r => setTimeout(r, 500));
+        if (!session.socketReady) throw new Error("Socket not ready, try again");
+
+        let code;
+        try { code = await session.conn.requestPairingCode(phoneNumber); }
+        catch { await new Promise(r => setTimeout(r, 2000)); code = await session.conn.requestPairingCode(phoneNumber); }
+
+        const formatted = code.match(/.{1,4}/g)?.join("-") || code;
+        session.pairing = formatted;
+        session.pairingNumber = phoneNumber;
+        console.log(chalk.green(`✅ [${sessionId}] pairing code: ${formatted}`));
+        return formatted;
+    });
+}
+
+// ── SOCKET BOOT (EXACT COPY OF YOUR WORKING BOT) ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
-
     await initMongo();
 
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
-
+    
     let version;
     try {
         ({ version } = await fetchLatestWaWebVersion());
-        console.log(chalk.cyan(`[+] [${sessionId}] WA version: ${JSON.stringify(version)}`));
     } catch (e) {
         version = [2, 3000, 1023223821];
-        console.warn(chalk.yellow(`[!] [${sessionId}] Could not fetch WA version, using fallback`));
     }
+    
+    console.log(chalk.cyan(`[${sessionId}] WA version: ${JSON.stringify(version)}`));
 
     const conn = makeWASocket({
         version,
@@ -119,7 +151,7 @@ async function bootSocket(sessionId, session) {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 60000,
         retryRequestDelayMs: 2000,
-        fireInitQueries: false, // MATCHING YOUR WORKING BOT
+        fireInitQueries: false,
         emitOwnEvents: false
     });
 
@@ -130,38 +162,43 @@ async function bootSocket(sessionId, session) {
         const { connection, lastDisconnect } = update;
 
         if (connection === "connecting") {
-            session.socketReady = true; // MATCHING YOUR WORKING BOT
-            console.log(chalk.cyan(`[+] [${sessionId}] socket ready`));
+            session.socketReady = true;
+            console.log(chalk.cyan(`🔌 [${sessionId}] socket ready`));
         }
 
         if (connection === "open") {
             session.socketReady = true;
             session.pairing = null;
             session.pairingNumber = null;
-            session.pairingInFlight = false;
-            console.log(chalk.green(`[+] [${sessionId}] connected as ${conn.user?.id}`));
+            console.log(chalk.green(`✅ [${sessionId}] connected as ${conn.user?.id}`));
+            
+            try {
+                const realPhone = conn.user?.id?.split(":")[0]?.split("@")[0] || null;
+                if (realPhone) {
+                    await db.collection("SessionSettings").updateOne({ sessionId }, { $set: { phoneNumber: realPhone } }, { upsert: true });
+                }
+            } catch (e) { console.error(`[${sessionId}] phone save error:`, e.message); }
         }
 
         if (connection === "close") {
             session.socketReady = false;
-            session.pairingInFlight = false;
             const code = lastDisconnect?.error?.output?.statusCode;
-            console.log(chalk.red(`[-] [${sessionId}] closed (${code})`));
+            console.log(chalk.red(`❌ [${sessionId}] closed (${code})`));
 
-            try { conn.end(undefined); } catch {}
-            if (session.conn === conn) session.conn = null;
+            if (session._paused) {
+                console.log(chalk.yellow(`⏸️ [${sessionId}] paused — not reconnecting`));
+                return;
+            }
 
             if (code === 401 || code === DisconnectReason.loggedOut) {
                 global.sessions.delete(sessionId);
                 return;
             }
-
+            if (code === 440) return;
             setTimeout(() => {
                 if (!global.sessions.has(sessionId)) return;
-                if (global.sessions.get(sessionId).conn) return;
-                bootSocket(sessionId, session).catch(e =>
-                    console.error(`Reconnect ${sessionId}:`, e.message)
-                );
+                if (session._paused) return;
+                bootSocket(sessionId, session).catch(e => console.error(`Reconnect ${sessionId}:`, e.message));
             }, 5000);
         }
     });
@@ -173,65 +210,6 @@ async function bootSocket(sessionId, session) {
     });
 
     return conn;
-}
-
-// ── PAIRING LOGIC ──
-async function requestPairingCodeForSession(sessionId, phoneNumber) {
-    return enqueuePairing(async () => {
-        await initMongo();
-
-        let session = global.sessions.get(sessionId);
-
-        if (session?.conn?.user) throw new Error("Session already paired");
-        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
-        if (session?.pairingInFlight) throw new Error("Pairing already in progress for this session. Please wait.");
-
-        if (!session) {
-            session = {
-                conn: null,
-                socketReady: false,
-                pairing: null,
-                pairingNumber: null,
-                pairingInFlight: false,
-                startedAt: Date.now()
-            };
-            global.sessions.set(sessionId, session);
-            await bootSocket(sessionId, session);
-        } else if (!session.conn) {
-            await bootSocket(sessionId, session);
-        }
-
-        session.pairingInFlight = true;
-        try {
-            const deadline = Date.now() + 30_000;
-            while (!session.socketReady && Date.now() < deadline) {
-                await new Promise(r => setTimeout(r, 500));
-            }
-            if (!session.socketReady) {
-                throw new Error("Socket not ready, try again in a few seconds");
-            }
-
-            let code;
-            try {
-                code = await session.conn.requestPairingCode(phoneNumber);
-            } catch (e) {
-                await new Promise(r => setTimeout(r, 2000));
-                code = await session.conn.requestPairingCode(phoneNumber);
-            }
-
-            const formatted = code.match(/.{1,4}/g)?.join("-") || code;
-            session.pairing = formatted;
-            session.pairingNumber = phoneNumber;
-            console.log(chalk.green(`[+] [${sessionId}] pairing code: ${formatted}`));
-            return formatted;
-        } catch (err) {
-            session.pairing = null;
-            session.pairingNumber = null;
-            throw err;
-        } finally {
-            session.pairingInFlight = false;
-        }
-    });
 }
 
 // ── HEALTH CHECK ──
@@ -292,7 +270,6 @@ const server = app.listen(PORT, '0.0.0.0', async () => {
                 socketReady: false,
                 pairing: null,
                 pairingNumber: null,
-                pairingInFlight: false,
                 startedAt: Date.now()
             };
             global.sessions.set("main", session);
