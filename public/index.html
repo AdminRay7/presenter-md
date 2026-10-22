@@ -5,17 +5,114 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>303-XMD | Grey Tech</title>
     <style>
-        body { font-family: 'Segoe UI', sans-serif; background: linear-gradient(135deg, #1e1e24 0%, #2b2b36 50%, #0f0f13 100%); color: #e0e0e0; display: flex; flex-direction: column; justify-content: center; align-items: center; min-height: 100vh; margin: 0; }
-        .card { background: rgba(40, 40, 45, 0.6); backdrop-filter: blur(15px); padding: 40px; border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.05); text-align: center; width: 100%; max-width: 420px; box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37); }
-        h1 { background: linear-gradient(90deg, #00ffcc, #0088ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-top: 0; font-size: 2.2rem; font-weight: 800; }
-        p { color: #9aa0a6; font-size: 0.95rem; margin-bottom: 25px; }
-        input { width: 90%; padding: 14px; margin: 10px 0; border-radius: 8px; border: 1px solid #444; background: #1a1a1f; color: #fff; font-size: 16px; outline: none; transition: all 0.3s ease; }
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1e1e24 0%, #2b2b36 50%, #0f0f13 100%);
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+        }
+        .card {
+            background: rgba(40, 40, 45, 0.6);
+            backdrop-filter: blur(15px);
+            padding: 40px 30px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            text-align: center;
+            width: 100%;
+            max-width: 420px;
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        }
+        h1 {
+            background: linear-gradient(90deg, #00ffcc, #0088ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin: 0 0 5px;
+            font-size: 2.2rem;
+            font-weight: 800;
+        }
+        p { color: #9aa0a6; font-size: 0.95rem; margin: 0 0 25px; }
+        input {
+            width: 100%;
+            padding: 14px;
+            margin: 10px 0;
+            border-radius: 8px;
+            border: 1px solid #444;
+            background: #1a1a1f;
+            color: #fff;
+            font-size: 16px;
+            outline: none;
+            transition: all 0.3s ease;
+        }
         input:focus { border-color: #00ffcc; box-shadow: 0 0 10px rgba(0, 255, 204, 0.2); }
-        button { width: 100%; padding: 14px; border-radius: 8px; border: none; background: linear-gradient(90deg, #00ffcc, #0088ff); color: #000; font-weight: bold; font-size: 16px; cursor: pointer; margin-top: 15px; transition: transform 0.2s; }
-        button:hover { transform: translateY(-2px); }
-        .code-box { margin-top: 25px; padding: 15px; background: #1a1a1f; border: 1px dashed #00ffcc; border-radius: 8px; font-size: 26px; font-weight: bold; letter-spacing: 3px; color: #00ffcc; display: none; }
-        #status { margin-top: 15px; font-size: 14px; font-weight: 500; }
-        .footer { margin-top: 30px; font-size: 0.85rem; color: #666; }
+        input:disabled { opacity: 0.6; cursor: not-allowed; }
+        button {
+            width: 100%;
+            padding: 14px;
+            border-radius: 8px;
+            border: none;
+            background: linear-gradient(90deg, #00ffcc, #0088ff);
+            color: #000;
+            font-weight: bold;
+            font-size: 16px;
+            cursor: pointer;
+            margin-top: 15px;
+            transition: transform 0.2s, opacity 0.2s;
+        }
+        button:hover:not(:disabled) { transform: translateY(-2px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .code-box {
+            margin-top: 25px;
+            padding: 15px;
+            background: #1a1a1f;
+            border: 1px dashed #00ffcc;
+            border-radius: 8px;
+            font-size: 26px;
+            font-weight: bold;
+            letter-spacing: 3px;
+            color: #00ffcc;
+            display: none;
+            cursor: pointer;
+            user-select: all;
+            position: relative;
+        }
+        .code-box:hover { background: #202028; }
+        .code-box::after {
+            content: "Tap to copy";
+            position: absolute;
+            bottom: -18px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11px;
+            color: #666;
+            letter-spacing: 0;
+            font-weight: normal;
+        }
+        #status {
+            margin-top: 15px;
+            font-size: 14px;
+            font-weight: 500;
+            min-height: 20px;
+            line-height: 1.4;
+        }
+        .hint {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #666;
+        }
+        .footer {
+            margin-top: 30px;
+            font-size: 0.85rem;
+            color: #666;
+            text-align: center;
+        }
         .footer span { color: #ff4d4d; }
     </style>
 </head>
@@ -23,51 +120,139 @@
     <div class="card">
         <h1>303-XMD</h1>
         <p>Grey Tech • Secure Linker</p>
-        <input type="text" id="phone" placeholder="e.g. 254794376595" autocomplete="off">
-        <button onclick="getCode()">Get Pairing Code</button>
+
+        <input
+            type="tel"
+            id="phone"
+            placeholder="e.g. 254794376595"
+            autocomplete="off"
+            inputmode="numeric"
+            maxlength="15"
+            oninput="this.value = this.value.replace(/\D/g, '')"
+        >
+
+        <button id="pairBtn" onclick="getCode()">Get Pairing Code</button>
+
         <div id="status"></div>
-        <div class="code-box" id="code-display"></div>
+        <div class="code-box" id="code-display" onclick="copyCode()"></div>
+
+        <div class="hint">Enter phone number with country code, no + or spaces.</div>
     </div>
+
     <div class="footer">
         303 XMD • Grey Tech<br>
         Made with <span>❤️</span> by Mr Presenter
     </div>
 
     <script>
-        async function getCode() {
-            const num = document.getElementById('phone').value;
-            const status = document.getElementById('status');
-            const codeBox = document.getElementById('code-display');
+        const phoneInput = document.getElementById('phone');
+        const pairBtn    = document.getElementById('pairBtn');
+        const statusEl   = document.getElementById('status');
+        const codeBox    = document.getElementById('code-display');
 
-            if(!num) {
-                status.innerText = "Please enter your phone number.";
-                status.style.color = "#ffaa00";
+        let countdownTimer = null;
+
+        function setStatus(msg, color) {
+            statusEl.innerText = msg;
+            statusEl.style.color = color;
+        }
+
+        function setLoading(isLoading) {
+            pairBtn.disabled = isLoading;
+            phoneInput.disabled = isLoading;
+            pairBtn.innerText = isLoading ? "Generating..." : "Get Pairing Code";
+        }
+
+        async function getCode() {
+            const num = phoneInput.value.trim();
+
+            // Client-side validation
+            if (!num) {
+                setStatus("Please enter your phone number.", "#ffaa00");
+                return;
+            }
+            if (num.length < 10 || num.length > 15) {
+                setStatus("Phone number must be 10–15 digits.", "#ffaa00");
                 return;
             }
 
-            status.innerText = "Generating code, please wait (up to 30s)...";
-            status.style.color = "#ffaa00";
             codeBox.style.display = "none";
+            codeBox.innerText = "";
+            setLoading(true);
+            setStatus("Generating code, please wait...", "#ffaa00");
 
             try {
-                // Sends 'main' as the default session ID
-                const res = await fetch(`/api/pair?sessionId=main&num=${num}`);
-                const data = await res.json();
+                const res = await fetch('/api/pair', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sessionId: "main", num })
+                });
 
-                if(data.code) {
-                    status.innerText = "Code generated! Enter it in WhatsApp > Linked Devices.";
-                    status.style.color = "#00ff00";
+                // Handle rate limit explicitly
+                if (res.status === 429) {
+                    const data = await res.json().catch(() => ({}));
+                    startCountdown(data.error || "Too many attempts. Please wait.");
+                    return;
+                }
+
+                const data = await res.json().catch(() => ({}));
+
+                if (res.ok && data.code) {
+                    setStatus("✅ Code generated! Open WhatsApp → Linked Devices → Link with phone number, then enter the code.", "#00ff00");
                     codeBox.innerText = data.code;
                     codeBox.style.display = "block";
                 } else {
-                    status.innerText = data.error || "Failed to get code.";
-                    status.style.color = "#ff0000";
+                    setStatus("❌ " + (data.error || "Failed to get code."), "#ff0000");
                 }
             } catch (err) {
-                status.innerText = "Server error. Please try again.";
-                status.style.color = "#ff0000";
+                setStatus("❌ Server error. Please try again.", "#ff0000");
+            } finally {
+                setLoading(false);
             }
         }
+
+        async function copyCode() {
+            const code = codeBox.innerText;
+            if (!code) return;
+            try {
+                await navigator.clipboard.writeText(code);
+                const original = codeBox.innerText;
+                codeBox.innerText = "Copied!";
+                setTimeout(() => { codeBox.innerText = original; }, 1000);
+            } catch {
+                // Fallback: select text
+                const range = document.createRange();
+                range.selectNodeContents(codeBox);
+                const sel = window.getSelection();
+                sel.removeAllRanges();
+                sel.addRange(range);
+            }
+        }
+
+        // Rate-limit countdown (60s matching backend)
+        function startCountdown(message) {
+            if (countdownTimer) clearInterval(countdownTimer);
+            let remaining = 60;
+            setLoading(true);
+            const tick = () => {
+                if (remaining <= 0) {
+                    clearInterval(countdownTimer);
+                    countdownTimer = null;
+                    setLoading(false);
+                    setStatus("You can try again now.", "#00ffcc");
+                    return;
+                }
+                setStatus(`⏳ ${message} (${remaining}s)`, "#ffaa00");
+                remaining--;
+            };
+            tick();
+            countdownTimer = setInterval(tick, 1000);
+        }
+
+        // Enter key submits
+        phoneInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !pairBtn.disabled) getCode();
+        });
     </script>
 </body>
 </html>
