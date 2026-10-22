@@ -34,7 +34,6 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // Legacy String to prevent DNS crash on Heroku
     mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -68,7 +67,7 @@ async function initMongo() {
     }
 }
 
-// ── BOOT SOCKET ──
+// ── SOCKET BOOT (Extracted from your working example) ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
     await initMongo();
@@ -76,9 +75,9 @@ async function bootSocket(sessionId, session) {
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
     
-    // THIS IS THE MAGIC LINE FOR PAIRING
+    // Magic Fix 1: Fetch absolute latest version
     const { version } = await fetchLatestWaWebVersion();
-    console.log(chalk.cyan(`[+] Using WA Version: ${version.join('.')}`));
+    console.log(chalk.cyan(`[+] [${sessionId}] WA version: ${JSON.stringify(version)}`));
 
     const conn = makeWASocket({
         version,
@@ -87,7 +86,8 @@ async function bootSocket(sessionId, session) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"), // Mimics Mac
+        // Magic Fix 2: Mimic macOS Safari
+        browser: Browsers.macOS("Safari"), 
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -107,19 +107,21 @@ async function bootSocket(sessionId, session) {
 
         if (connection === "connecting") {
             session.socketReady = true;
+            console.log(chalk.cyan(`[+] [${sessionId}] socket ready`));
         }
 
         if (connection === "open") {
             session.socketReady = true;
             session.pairing = null;
-            console.log(chalk.green(`[+] Session ${sessionId} connected as ${conn.user?.id}`));
+            console.log(chalk.green(`[+] [${sessionId}] connected as ${conn.user?.id}`));
         }
 
         if (connection === "close") {
             session.socketReady = false;
             const code = lastDisconnect?.error?.output?.statusCode;
+            console.log(chalk.red(`[-] [${sessionId}] closed (${code})`));
+
             if (code === 401 || code === DisconnectReason.loggedOut) {
-                // Logged out, delete session
                 global.sessions.delete(sessionId);
                 return;
             }
@@ -137,38 +139,28 @@ async function bootSocket(sessionId, session) {
     return conn;
 }
 
-// ── PAIRING LOGIC (No Session Locks) ──
+// ── PAIRING LOGIC (Extracted from your working example) ──
 async function requestPairingCodeForSession(sessionId, phoneNumber) {
     return enqueuePairing(async () => {
         await initMongo();
         let session = global.sessions.get(sessionId);
+        
+        if (session?.conn?.user) throw new Error("Session already paired");
+        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
 
-        // If it's already connected, we wipe it to allow re-pairing
-        if (session?.conn?.user) {
-            try { session.conn.ws.close(); } catch(e){}
-            await db.collection('authState').deleteMany({ sessionId });
-            session = null;
-        }
-
-        // Create new session object
         if (!session) {
-            session = { conn: null, socketReady: false, pairing: null, pairingNumber: null };
+            session = { conn: null, socketReady: false, pairing: null, pairingNumber: null, startedAt: Date.now() };
             global.sessions.set(sessionId, session);
             await bootSocket(sessionId, session);
         }
 
-        // Wait for socket to be ready
         const deadline = Date.now() + 30000;
-        while (!session.socketReady && Date.now() < deadline) {
-            await new Promise(r => setTimeout(r, 500));
-        }
+        while (!session.socketReady && Date.now() < deadline) await new Promise(r => setTimeout(r, 500));
         if (!session.socketReady) throw new Error("Socket not ready, try again");
 
-        // Request the code
         let code;
-        try { 
-            code = await session.conn.requestPairingCode(phoneNumber); 
-        } catch { 
+        try { code = await session.conn.requestPairingCode(phoneNumber); }
+        catch { 
             await new Promise(r => setTimeout(r, 2000)); 
             code = await session.conn.requestPairingCode(phoneNumber); 
         }
@@ -183,7 +175,7 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
 
 // ── API ROUTE ──
 app.get("/api/pair", async (req, res) => {
-    const sessionId = String(req.query.sessionId || "default").trim();
+    const sessionId = String(req.query.sessionId || "main").trim();
     const num = String(req.query.num || "").replace(/\D/g, "");
 
     if (!num || num.length < 10 || num.length > 15) {
@@ -213,9 +205,7 @@ app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
     try {
         await initMongo();
-        // We don't auto-boot here anymore because you want pairing anytime.
-        // The /api/pair route boots it on demand.
     } catch (e) {
-        console.log(chalk.red(`[-] Failed to start DB.`));
+        console.log(chalk.red(`[-] Failed to start bot automatically. Waiting for manual pair from web.`));
     }
 });
