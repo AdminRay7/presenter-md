@@ -3,68 +3,61 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>303-XMD Dashboard</title>
+    <title>303-XMD Linker</title>
     <style>
         body { font-family: 'Segoe UI', sans-serif; background: #0f0f0f; color: #fff; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }
-        .card { background: #1a1a1a; padding: 40px; border-radius: 12px; border: 1px solid #333; text-align: center; width: 100%; max-width: 400px; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+        .card { background: #1a1a1a; padding: 40px; border-radius: 12px; border: 1px solid #333; text-align: center; width: 100%; max-width: 400px; }
         h1 { color: #00ffcc; margin-top: 0; }
-        p { color: #888; font-size: 14px; }
-        input { width: 90%; padding: 12px; margin: 15px 0; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; outline: none; }
-        input:focus { border-color: #00ffcc; }
-        button { width: 100%; padding: 12px; border-radius: 6px; border: none; background: #00ffcc; color: #000; font-weight: bold; cursor: pointer; transition: 0.3s; }
-        button:hover { background: #00ccaa; }
-        .code-box { margin-top: 20px; padding: 15px; background: #222; border: 1px dashed #00ffcc; border-radius: 6px; font-size: 24px; font-weight: bold; letter-spacing: 2px; color: #00ffcc; display: none; }
-        .status { margin-top: 15px; font-size: 14px; font-weight: bold; color: #ffaa00; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border-radius: 6px; border: 1px solid #444; background: #222; color: #fff; }
+        button { width: 100%; padding: 12px; border-radius: 6px; border: none; background: #00ffcc; color: #000; font-weight: bold; cursor: pointer; }
+        .code-box { margin-top: 20px; padding: 15px; background: #222; border: 1px dashed #00ffcc; border-radius: 6px; font-size: 24px; color: #00ffcc; display: none; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1>303-XMD</h1>
-        <p>The Last Key - Web Linker</p>
+        <p>Enter your details to pair</p>
         
-        <div id="pair-section">
-            <input type="text" id="phone" placeholder="e.g., 254794376595" autocomplete="off">
-            <button onclick="getCode()">Get Pairing Code</button>
-        </div>
+        <input type="text" id="sessionId" placeholder="Session ID (e.g., user1)" value="user1">
+        <input type="text" id="phone" placeholder="Phone (254794376595)">
         
-        <div class="status" id="status-msg"></div>
+        <button onclick="getCode()">Get Pairing Code</button>
+        
+        <div id="status" style="margin-top: 15px; font-size: 14px; color: #ffaa00;"></div>
         <div class="code-box" id="code-display"></div>
     </div>
 
     <script>
         async function getCode() {
-            const phone = document.getElementById('phone').value;
-            const statusMsg = document.getElementById('status-msg');
+            const sessionId = document.getElementById('sessionId').value;
+            const num = document.getElementById('phone').value;
+            const status = document.getElementById('status');
             const codeBox = document.getElementById('code-display');
 
-            if(!phone) {
-                statusMsg.innerText = "Please enter a phone number.";
+            if(!sessionId || !num) {
+                status.innerText = "Please fill in all fields.";
                 return;
             }
 
-            statusMsg.innerText = "Generating code, please wait...";
-            statusMsg.style.color = "#ffaa00";
+            status.innerText = "Generating code, please wait (up to 30s)...";
+            codeBox.style.display = "none";
 
             try {
-                const res = await fetch('/pair', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone })
-                });
+                const res = await fetch(`/api/pair?sessionId=${sessionId}&num=${num}`);
                 const data = await res.json();
 
                 if(data.code) {
-                    statusMsg.innerText = "Link via WhatsApp > Linked Devices.";
-                    statusMsg.style.color = "#00ff00";
+                    status.innerText = "Code generated! Link via WhatsApp.";
+                    status.style.color = "#00ff00";
                     codeBox.innerText = data.code;
                     codeBox.style.display = "block";
                 } else {
-                    statusMsg.innerText = data.error || "Failed to get code.";
-                    statusMsg.style.color = "#ff0000";
+                    status.innerText = data.error || "Failed to get code.";
+                    status.style.color = "#ff0000";
                 }
             } catch (err) {
-                statusMsg.innerText = "Server error.";
-                statusMsg.style.color = "#ff0000";
+                status.innerText = "Server error.";
+                status.style.color = "#ff0000";
             }
         }
     </script>
