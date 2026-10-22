@@ -1,27 +1,25 @@
-import 'dotenv/config';
-import dns from 'dns';
+require("dotenv").config();
+const dns = require("dns");
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-import makeWASocket, {
-    DisconnectReason,
-    Browsers,
-    makeCacheableSignalKeyStore,
-    fetchLatestWaWebVersion
-} from '@whiskeysockets/baileys';
-import pino from 'pino';
-import chalk from 'chalk';
-import express from 'express';
-import path from 'path';
-import https from 'https';
-import http from 'http';
-import { MongoClient } from 'mongodb';
-import { fileURLToPath } from 'url';
+const { 
+    default: makeWASocket, 
+    DisconnectReason, 
+    Browsers, 
+    makeCacheableSignalKeyStore, 
+    fetchLatestWaWebVersion 
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const chalk = require("chalk");
+const express = require("express");
+const path = require("path");
+const https = require("https");
+const http = require("http");
+const { MongoClient } = require("mongodb");
+const fs = require("fs");
 
-import { presenter } from './presenter.js';
-import { useMongoDBAuthState } from './lib/mongo-auth.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const { presenter } = require("./presenter.js");
+const { useMongoDBAuthState } = require("./lib/mongo-auth.js");
 
 // ═════════════════════════════════
 // BOT IDENTITY & CONFIGURATION
