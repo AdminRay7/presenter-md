@@ -5,7 +5,7 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "start": "node --max-old-space-size=400 --enable-source-maps --expose-gc index.js"
+    "start": "node --max-old-space-size=460 --enable-source-maps --expose-gc index.js"
   },
   "author": "mr presenter",
   "license": "MIT",
@@ -20,6 +20,6 @@
     "pino": "^8.0.0"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": "20.x"
   }
 }
