@@ -1,27 +1,25 @@
-import 'dotenv/config';
-import dns from 'dns';
+require("dotenv").config();
+const dns = require("dns");
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-import makeWASocket, {
-    DisconnectReason,
-    Browsers,
-    makeCacheableSignalKeyStore,
-    fetchLatestWaWebVersion
-} from '@whiskeysockets/baileys';
-import pino from 'pino';
-import chalk from 'chalk';
-import express from 'express';
-import path from 'path';
-import https from 'https';
-import http from 'http';
-import { MongoClient } from 'mongodb';
-import { fileURLToPath } from 'url';
+const { 
+    default: makeWASocket, 
+    DisconnectReason, 
+    Browsers, 
+    makeCacheableSignalKeyStore, 
+    fetchLatestWaWebVersion 
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const chalk = require("chalk");
+const express = require("express");
+const path = require("path");
+const https = require("https");
+const http = require("http");
+const { MongoClient } = require("mongodb");
 
-import { presenter } from './presenter.js';
-import { useMongoDBAuthState } from './lib/mongo-auth.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// Make sure these exist in your folder!
+const { presenter } = require("./presenter.js");
+const { useMongoDBAuthState } = require("./lib/mongo-auth.js");
 
 // ═════════════════════════════════
 // BOT IDENTITY & CONFIGURATION
@@ -40,13 +38,8 @@ const config = {
     mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
-// ── GLOBAL ERROR HANDLERS ──
-process.on("unhandledRejection", (e) => {
-    console.error(chalk.red("[unhandledRejection]"), e?.message || e);
-});
-process.on("uncaughtException", (e) => {
-    console.error(chalk.red("[uncaughtException]"), e?.message || e);
-});
+process.on("unhandledRejection", (e) => console.error(chalk.red("[unhandledRejection]"), e?.message || e));
+process.on("uncaughtException", (e) => console.error(chalk.red("[uncaughtException]"), e?.message || e));
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -118,7 +111,7 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
     });
 }
 
-// ── SOCKET BOOT ──
+// ── SOCKET BOOT (EXACT COPY OF YOUR WORKING BOT) ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
     await initMongo();
@@ -126,8 +119,12 @@ async function bootSocket(sessionId, session) {
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
     
-    // Hardcoded version to prevent instant WhatsApp rejection
-    let version = [2, 3000, 1042466098]; 
+    let version;
+    try {
+        ({ version } = await fetchLatestWaWebVersion());
+    } catch (e) {
+        version = [2, 3000, 1023223821];
+    }
     
     console.log(chalk.cyan(`[${sessionId}] WA version: ${JSON.stringify(version)}`));
 
@@ -146,7 +143,7 @@ async function bootSocket(sessionId, session) {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 60000,
         retryRequestDelayMs: 2000,
-        fireInitQueries: false,
+        fireInitQueries: false, // THIS IS THE MAGIC LINE FROM YOUR WORKING BOT
         emitOwnEvents: false
     });
 
@@ -157,7 +154,7 @@ async function bootSocket(sessionId, session) {
         const { connection, lastDisconnect } = update;
 
         if (connection === "connecting") {
-            session.socketReady = true;
+            session.socketReady = true; // THIS IS THE MAGIC LINE FROM YOUR WORKING BOT
             console.log(chalk.cyan(`🔌 [${sessionId}] socket ready`));
         }
 
