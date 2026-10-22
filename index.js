@@ -2,130 +2,82 @@ require("dotenv").config();
 const dns = require("dns");
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
-const { 
-    default: makeWASocket, 
-    DisconnectReason, 
-    Browsers, 
-    makeCacheableSignalKeyStore, 
-    fetchLatestWaWebVersion 
-} = require("@whiskeysockets/baileys");
+const makeWASocket = require("@whiskeysockets/baileys").default;
+const { Browsers, makeCacheableSignalKeyStore, fetchLatestWaWebVersion, DisconnectReason } = require("@whiskeysockets/baileys");
+const { MongoClient } = require("mongodb");
+const { useMongoDBAuthState } = require("./lib/mongoAuthState"); // Ensure this matches your file name
 const pino = require("pino");
 const chalk = require("chalk");
 const express = require("express");
 const path = require("path");
 const https = require("https");
 const http = require("http");
-const { MongoClient } = require("mongodb");
 
-// Make sure these exist in your folder!
-const { presenter } = require("./presenter.js");
-const { useMongoDBAuthState } = require("./lib/mongo-auth.js");
-
-// ═════════════════════════════════
-// BOT IDENTITY & CONFIGURATION
-// ═════════════════════════════════
-const config = {
-    botName: "303-XMD",
-    tagline: "The Last Key",
-    version: "2.0.0",
-    prefix: ".",
-    ownerName: "Mr Presenter",
-    ownerNumber: "254794376595",
-    adminEmail: "ryanobanga243@gmail.com",
-    footer: "303-XMD — THE LAST KEY",
-    channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
-    newsletterJid: "120363430114825309@newsletter",
-    mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
+// ============================================================
+//   WHATSAPP CONNECTION STRINGS
+// ============================================================
+const WA = {
+    DB_URI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority",
+    DB_NAME: "xmd303",
+    AUTH_COLLECTION: "authState",
+    BROWSER: Browsers.macOS("Safari"),
+    SOCKET_OPTIONS: {
+        syncFullHistory: false,
+        markOnlineOnConnect: false,
+        generateHighQualityLinkPreview: false,
+        connectTimeoutMs: 60000,
+        defaultQueryTimeoutMs: 60000,
+        keepAliveIntervalMs: 60000,
+        retryRequestDelayMs: 2000,
+        fireInitQueries: false,
+        emitOwnEvents: false
+    },
+    PAIRING_TIMEOUT_MS: 30000,
+    RECONNECT_DELAY_MS: 5000,
+    MAX_SESSIONS: 12
 };
 
-process.on("unhandledRejection", (e) => console.error(chalk.red("[unhandledRejection]"), e?.message || e));
-process.on("uncaughtException", (e) => console.error(chalk.red("[uncaughtException]"), e?.message || e));
-
-const app = express();
-app.use(express.json({ limit: "5mb" }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-// ── GLOBALS ──
-let mongoClient, db;
+// ============================================================
+//   GLOBAL STATE
+// ============================================================
 global.sessions = new Map();
+global.mongoClient = null;
+
 let pairingQueue = Promise.resolve();
-
-const pairAttempts = new Map();
-const PAIR_COOLDOWN_MS = 60_000;
-
-const enqueuePairing = (fn) => {
+function enqueuePairing(fn) {
     const next = pairingQueue.then(fn, fn);
     pairingQueue = next.catch(() => {});
     return next;
-};
+}
 
-// ── DATABASE INIT ──
+// ============================================================
+//   MONGO INIT
+// ============================================================
 async function initMongo() {
-    if (db) return db;
-    try {
-        mongoClient = new MongoClient(config.mongoURI, {
-            serverSelectionTimeoutMS: 15000,
-            connectTimeoutMS: 15000,
-        });
-        await mongoClient.connect();
-        db = mongoClient.db("xmd303");
-        console.log(chalk.green(`[+] MongoDB Connected Successfully`));
-        return db;
-    } catch (e) {
-        console.error(chalk.red(`[-] MongoDB Connection Error: ${e.message}`));
-        mongoClient = null;
-        db = null;
-        throw e;
+    if (!global.mongoClient) {
+        global.mongoClient = new MongoClient(WA.DB_URI, { serverSelectionTimeoutMS: 15000 });
+        await global.mongoClient.connect();
+        console.log(chalk.green("✅ MongoDB connected"));
     }
+    return global.mongoClient.db(WA.DB_NAME).collection(WA.AUTH_COLLECTION);
 }
 
-// ── PAIRING (EXACT COPY OF YOUR WORKING BOT) ──
-async function requestPairingCodeForSession(sessionId, phoneNumber) {
-    return enqueuePairing(async () => {
-        await initMongo();
-        let session = global.sessions.get(sessionId);
-        if (session?.conn?.user) throw new Error("Session already paired");
-        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
-
-        if (!session) {
-            session = { conn: null, socketReady: false, pairing: null, pairingNumber: null, startedAt: Date.now(), welcomed: false };
-            global.sessions.set(sessionId, session);
-            await bootSocket(sessionId, session);
-        } else if (!session.conn) {
-            await bootSocket(sessionId, session);
-        }
-
-        const deadline = Date.now() + 30000;
-        while (!session.socketReady && Date.now() < deadline) await new Promise(r => setTimeout(r, 500));
-        if (!session.socketReady) throw new Error("Socket not ready, try again");
-
-        let code;
-        try { code = await session.conn.requestPairingCode(phoneNumber); }
-        catch { await new Promise(r => setTimeout(r, 2000)); code = await session.conn.requestPairingCode(phoneNumber); }
-
-        const formatted = code.match(/.{1,4}/g)?.join("-") || code;
-        session.pairing = formatted;
-        session.pairingNumber = phoneNumber;
-        console.log(chalk.green(`✅ [${sessionId}] pairing code: ${formatted}`));
-        return formatted;
-    });
-}
-
-// ── SOCKET BOOT (EXACT COPY OF YOUR WORKING BOT) ──
+// ============================================================
+//   SOCKET BOOT
+// ============================================================
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
-    await initMongo();
 
-    const collection = db.collection("authState");
+    const collection = await initMongo();
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
     
     let version;
     try {
         ({ version } = await fetchLatestWaWebVersion());
     } catch (e) {
-        version = [2, 3000, 1023223821];
+        version = [2, 3000, 1023223821]; // Fallback
     }
-    
+
     console.log(chalk.cyan(`[${sessionId}] WA version: ${JSON.stringify(version)}`));
 
     const conn = makeWASocket({
@@ -135,16 +87,8 @@ async function bootSocket(sessionId, session) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"),
-        syncFullHistory: false,
-        markOnlineOnConnect: false,
-        generateHighQualityLinkPreview: false,
-        connectTimeoutMs: 60000,
-        defaultQueryTimeoutMs: 60000,
-        keepAliveIntervalMs: 60000,
-        retryRequestDelayMs: 2000,
-        fireInitQueries: false, // THIS IS THE MAGIC LINE FROM YOUR WORKING BOT
-        emitOwnEvents: false
+        browser: WA.BROWSER,
+        ...WA.SOCKET_OPTIONS
     });
 
     session.conn = conn;
@@ -154,7 +98,7 @@ async function bootSocket(sessionId, session) {
         const { connection, lastDisconnect } = update;
 
         if (connection === "connecting") {
-            session.socketReady = true; // THIS IS THE MAGIC LINE FROM YOUR WORKING BOT
+            session.socketReady = true;
             console.log(chalk.cyan(`🔌 [${sessionId}] socket ready`));
         }
 
@@ -163,10 +107,19 @@ async function bootSocket(sessionId, session) {
             session.pairing = null;
             session.pairingNumber = null;
             console.log(chalk.green(`✅ [${sessionId}] connected as ${conn.user?.id}`));
-            
+
+            try {
+                await collection.updateOne(
+                    { _id: `${sessionId}:meta` },
+                    { $set: { value: { jid: conn.user?.id, linkedAt: Date.now() } } },
+                    { upsert: true }
+                );
+            } catch {}
+
             try {
                 const realPhone = conn.user?.id?.split(":")[0]?.split("@")[0] || null;
                 if (realPhone) {
+                    const db = global.mongoClient.db(WA.DB_NAME);
                     await db.collection("SessionSettings").updateOne({ sessionId }, { $set: { phoneNumber: realPhone } }, { upsert: true });
                 }
             } catch (e) { console.error(`[${sessionId}] phone save error:`, e.message); }
@@ -178,44 +131,152 @@ async function bootSocket(sessionId, session) {
             console.log(chalk.red(`❌ [${sessionId}] closed (${code})`));
 
             if (session._paused) return;
-            if (code === 401 || code === DisconnectReason.loggedOut) {
-                global.sessions.delete(sessionId);
+
+            if (code === 401) {
+                await logoutSession(sessionId);
                 return;
             }
             if (code === 440) return;
+
             setTimeout(() => {
                 if (!global.sessions.has(sessionId)) return;
                 if (session._paused) return;
                 bootSocket(sessionId, session).catch(e => console.error(`Reconnect ${sessionId}:`, e.message));
-            }, 5000);
+            }, WA.RECONNECT_DELAY_MS);
         }
     });
 
     conn.ev.on("messages.upsert", async (m) => {
-        try { await presenter(conn, m, config); } catch (err) {
-            console.error(`[presenter] ${err.message}`);
+        try {
+            // If you have a handler.js, use it here, otherwise use presenter
+            if (require("fs").existsSync("./handler.js")) {
+                require("./handler")(conn, m, sessionId);
+            } else {
+                const { presenter } = require("./presenter.js");
+                await presenter(conn, m);
+            }
+        } catch (err) {
+            console.error(`[${sessionId}] message error:`, err);
         }
     });
 
     return conn;
 }
 
-// ── HEALTH CHECK ──
+// ============================================================
+//   PAIRING CODE PATH
+// ============================================================
+async function requestPairingCodeForSession(sessionId, phoneNumber) {
+    return enqueuePairing(async () => {
+        await initMongo();
+
+        let session = global.sessions.get(sessionId);
+        if (session?.conn?.user) throw new Error("Session already paired");
+        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
+
+        if (!session) {
+            if (global.sessions.size >= WA.MAX_SESSIONS) {
+                throw new Error(`Server at capacity (${WA.MAX_SESSIONS})`);
+            }
+            session = {
+                conn: null,
+                socketReady: false,
+                pairing: null,
+                pairingNumber: null,
+                startedAt: Date.now(),
+                welcomed: false
+            };
+            global.sessions.set(sessionId, session);
+            await bootSocket(sessionId, session);
+        } else if (!session.conn) {
+            await bootSocket(sessionId, session);
+        }
+
+        const deadline = Date.now() + WA.PAIRING_TIMEOUT_MS;
+        while (!session.socketReady && Date.now() < deadline) {
+            await new Promise(r => setTimeout(r, 500));
+        }
+        if (!session.socketReady) throw new Error("Socket not ready, try again");
+
+        let code;
+        try {
+            code = await session.conn.requestPairingCode(phoneNumber);
+        } catch {
+            await new Promise(r => setTimeout(r, 2000));
+            code = await session.conn.requestPairingCode(phoneNumber);
+        }
+
+        const formatted = code.match(/.{1,4}/g)?.join("-") || code;
+        session.pairing = formatted;
+        session.pairingNumber = phoneNumber;
+        console.log(chalk.green(`✅ [${sessionId}] pairing code: ${formatted}`));
+        return formatted;
+    });
+}
+
+// ============================================================
+//   LOGOUT
+// ============================================================
+async function logoutSession(sessionId) {
+    const s = global.sessions.get(sessionId);
+    if (s) {
+        try {
+            s.conn?.ev.removeAllListeners();
+            s.conn?.ws?.close();
+        } catch {}
+        global.sessions.delete(sessionId);
+    }
+    try {
+        const collection = await initMongo();
+        await collection.deleteMany({ _id: { $regex: `^${sessionId}:` } });
+    } catch {}
+}
+
+// ============================================================
+//   RESUME ALL SESSIONS
+// ============================================================
+async function resumeAllSessions() {
+    const collection = await initMongo();
+    const metas = await collection.find({ _id: { $regex: ":meta$" } }).toArray();
+    console.log(chalk.cyan(`🔄 Resuming ${metas.length} session(s)...`));
+
+    for (const meta of metas) {
+        const sessionId = meta._id.replace(/:meta$/, "");
+        if (global.sessions.has(sessionId)) continue;
+        if (global.sessions.size >= WA.MAX_SESSIONS) break;
+
+        const session = {
+            conn: null,
+            socketReady: false,
+            pairing: null,
+            pairingNumber: null,
+            startedAt: Date.now(),
+            welcomed: false
+        };
+        global.sessions.set(sessionId, session);
+        try {
+            await bootSocket(sessionId, session);
+        } catch (e) {
+            console.error(`Resume ${sessionId}:`, e.message);
+        }
+        await new Promise(r => setTimeout(r, 1500));
+    }
+}
+
+// ============================================================
+//   EXPRESS SERVER SETUP
+// ============================================================
+const app = express();
+app.use(express.json({ limit: "5mb" }));
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Health Check
 app.get("/health", (_req, res) => {
     res.json({ ok: true, sessions: global.sessions.size, uptime: process.uptime() });
 });
 
-// ── API ROUTE ──
+// API Route for pairing (Matches your index.html)
 app.post("/api/pair", async (req, res) => {
-    const ip = req.ip || req.socket.remoteAddress || "unknown";
-    const now = Date.now();
-    const last = pairAttempts.get(ip) || 0;
-    
-    if (now - last < PAIR_COOLDOWN_MS) {
-        const wait = Math.ceil((PAIR_COOLDOWN_MS - (now - last)) / 1000);
-        return res.status(429).json({ error: `Please wait ${wait}s before trying again.` });
-    }
-
     const sessionId = String(req.body?.sessionId || "main").trim();
     const num = String(req.body?.num || "").replace(/\D/g, "");
 
@@ -224,16 +285,16 @@ app.post("/api/pair", async (req, res) => {
     }
 
     try {
-        await initMongo();
         const code = await requestPairingCodeForSession(sessionId, num);
-
+        
+        // Save phone to DB
+        const db = global.mongoClient.db(WA.DB_NAME);
         await db.collection('SessionSettings').updateOne(
             { sessionId },
             { $set: { phoneNumber: num, updatedAt: new Date() } },
             { upsert: true }
         );
 
-        pairAttempts.set(ip, Date.now());
         res.json({ success: true, sessionId, code });
     } catch (error) {
         console.error(error);
@@ -241,67 +302,47 @@ app.post("/api/pair", async (req, res) => {
     }
 });
 
-// ── LAUNCH SERVER ──
+// ============================================================
+//   LAUNCH SERVER
+// ============================================================
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
 
     try {
         await initMongo();
-        const collection = db.collection("authState");
-        const hasSession = await collection.findOne({ _id: "main:creds" });
-
-        if (hasSession) {
-            console.log(chalk.cyan(`[+] Found existing session in DB. Auto-connecting...`));
-            const session = {
-                conn: null,
-                socketReady: false,
-                pairing: null,
-                pairingNumber: null,
-                startedAt: Date.now()
-            };
-            global.sessions.set("main", session);
-            await bootSocket("main", session);
-        } else {
-            console.log(chalk.yellow(`[!] No session found. Please pair via the web dashboard.`));
-        }
+        await resumeAllSessions();
     } catch (e) {
-        console.log(chalk.red(`[-] Failed to start bot automatically: ${e.message}`));
+        console.log(chalk.red(`[-] Failed to auto-start bot: ${e.message}`));
     }
 });
 
-// ── GRACEFUL SHUTDOWN ──
+// ============================================================
+//   GRACEFUL SHUTDOWN & KEEP-ALIVE
+// ============================================================
 async function shutdown(signal) {
     console.log(chalk.yellow(`\n[!] ${signal} received, shutting down...`));
     server.close();
     for (const [, sess] of global.sessions) {
         try { sess.conn?.end(undefined); } catch {}
     }
-    try { await mongoClient?.close(); } catch {}
+    try { await global.mongoClient?.close(); } catch {}
     process.exit(0);
 }
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// ── KEEP-ALIVE ──
 const appName = process.env.HEROKU_APP_NAME || "lastkey";
 if (process.env.BASE_URL || appName) {
     const selfUrl = process.env.BASE_URL || `https://${appName}.herokuapp.com`;
     const client = selfUrl.startsWith('https:') ? https : http;
 
-    const ping = () => {
+    setInterval(() => {
         const req = client.get(`${selfUrl}/health`, (res) => {
             res.on('data', () => {});
-            res.on('end', () => {
-                if (res.statusCode >= 400)
-                    console.warn(chalk.yellow(`[keep-alive] /health -> ${res.statusCode}`));
-            });
+            res.on('end', () => {});
         });
-        req.on('error', (e) =>
-            console.warn(chalk.yellow(`[keep-alive] ping failed: ${e.message}`)));
+        req.on('error', () => {});
         req.setTimeout(15000, () => req.destroy());
-    };
-
-    setInterval(ping, 20 * 60 * 1000);
-    console.log(chalk.cyan(`[+] Keep-alive pinging ${selfUrl}/health every 20 min`));
+    }, 20 * 60 * 1000);
 }
