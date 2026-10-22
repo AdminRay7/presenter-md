@@ -16,8 +16,8 @@ const path = require("path");
 const https = require("https");
 const http = require("http");
 const { MongoClient } = require("mongodb");
-const fs = require("fs");
 
+// Make sure these files exist in your project folder!
 const { presenter } = require("./presenter.js");
 const { useMongoDBAuthState } = require("./lib/mongo-auth.js");
 
@@ -35,17 +35,11 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // Hardcoded fallback
     mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
-// ── GLOBAL ERROR HANDLERS ──
-process.on("unhandledRejection", (e) => {
-    console.error(chalk.red("[unhandledRejection]"), e?.message || e);
-});
-process.on("uncaughtException", (e) => {
-    console.error(chalk.red("[uncaughtException]"), e?.message || e);
-});
+process.on("unhandledRejection", (e) => console.error(chalk.red("[unhandledRejection]"), e?.message || e));
+process.on("uncaughtException", (e) => console.error(chalk.red("[uncaughtException]"), e?.message || e));
 
 const app = express();
 app.use(express.json({ limit: "5mb" }));
@@ -117,7 +111,7 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
     });
 }
 
-// ── SOCKET BOOT (EXACT COPY OF YOUR WORKING BOT) ──
+// ── SOCKET BOOT ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
     await initMongo();
@@ -183,11 +177,7 @@ async function bootSocket(sessionId, session) {
             const code = lastDisconnect?.error?.output?.statusCode;
             console.log(chalk.red(`❌ [${sessionId}] closed (${code})`));
 
-            if (session._paused) {
-                console.log(chalk.yellow(`⏸️ [${sessionId}] paused — not reconnecting`));
-                return;
-            }
-
+            if (session._paused) return;
             if (code === 401 || code === DisconnectReason.loggedOut) {
                 global.sessions.delete(sessionId);
                 return;
