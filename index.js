@@ -58,7 +58,6 @@ let mongoClient, db;
 global.sessions = new Map();
 let pairingQueue = Promise.resolve();
 
-// Basic in-memory rate limiter (per IP)
 const pairAttempts = new Map();
 const PAIR_COOLDOWN_MS = 60_000;
 
@@ -98,7 +97,6 @@ async function bootSocket(sessionId, session) {
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
 
-    // Fetch WA version safely — fallback if network blips
     let version;
     try {
         ({ version } = await fetchLatestWaWebVersion());
@@ -135,6 +133,10 @@ async function bootSocket(sessionId, session) {
 
         if (connection === "connecting") {
             console.log(chalk.cyan(`[+] [${sessionId}] connecting...`));
+            // WAIT 5 SECONDS before marking ready to prevent 401 rejection
+            setTimeout(() => {
+                session.socketReady = true;
+            }, 5000);
         }
 
         if (connection === "open") {
@@ -327,8 +329,7 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// ── KEEP-ALIVE (Auto-detects your Heroku app URL) ──
-// If you don't have HEROKU_APP_NAME in vars, it defaults to your app name "lastkey"
+// ── KEEP-ALIVE ──
 const appName = process.env.HEROKU_APP_NAME || "lastkey";
 if (process.env.BASE_URL || appName) {
     const selfUrl = process.env.BASE_URL || `https://${appName}.herokuapp.com`;
@@ -347,6 +348,6 @@ if (process.env.BASE_URL || appName) {
         req.setTimeout(15000, () => req.destroy());
     };
 
-    setInterval(ping, 20 * 60 * 1000); // every 20 min
+    setInterval(ping, 20 * 60 * 1000);
     console.log(chalk.cyan(`[+] Keep-alive pinging ${selfUrl}/health every 20 min`));
 }
