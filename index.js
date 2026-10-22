@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import dns from 'dns';
 dns.setServers(['8.8.8.8', '8.8.4.4']);
 
@@ -36,8 +37,8 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // ⚠️  Secret from env only. Never hardcode credentials.
-    mongoURI: process.env.MONGO_URI,
+    // Hardcoded fallback so you don't need Heroku Vars
+    mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
 // ── GLOBAL ERROR HANDLERS ──
@@ -47,13 +48,6 @@ process.on("unhandledRejection", (e) => {
 process.on("uncaughtException", (e) => {
     console.error(chalk.red("[uncaughtException]"), e?.message || e);
 });
-
-// ── CONFIG VALIDATION ──
-if (!config.mongoURI) {
-    console.error(chalk.red("[-] MONGO_URI environment variable is required."));
-    console.error(chalk.yellow("    Set it with:  export MONGO_URI='mongodb+srv://...'"));
-    process.exit(1);
-}
 
 const app = express();
 app.use(express.json({ limit: "64kb" }));
@@ -129,7 +123,6 @@ async function bootSocket(sessionId, session) {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 60000,
         retryRequestDelayMs: 2000,
-        // ⚠️ fireInitQueries MUST stay default (true) so pairing works.
         emitOwnEvents: false
     });
 
@@ -141,7 +134,6 @@ async function bootSocket(sessionId, session) {
         const { connection, lastDisconnect } = update;
 
         if (connection === "connecting") {
-            // Do NOT set socketReady here — WS handshake not finished yet.
             console.log(chalk.cyan(`[+] [${sessionId}] connecting...`));
         }
 
@@ -159,7 +151,6 @@ async function bootSocket(sessionId, session) {
             const code = lastDisconnect?.error?.output?.statusCode;
             console.log(chalk.red(`[-] [${sessionId}] closed (${code})`));
 
-            // Clean up the old socket to avoid leaks
             try { conn.end(undefined); } catch {}
             if (session.conn === conn) session.conn = null;
 
@@ -170,7 +161,7 @@ async function bootSocket(sessionId, session) {
 
             setTimeout(() => {
                 if (!global.sessions.has(sessionId)) return;
-                if (global.sessions.get(sessionId).conn) return; // already re-booted
+                if (global.sessions.get(sessionId).conn) return;
                 bootSocket(sessionId, session).catch(e =>
                     console.error(`Reconnect ${sessionId}:`, e.message)
                 );
@@ -196,12 +187,10 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
 
         if (session?.conn?.user) throw new Error("Session already paired");
 
-        // Return cached code for same number
         if (session?.pairing && session.pairingNumber === phoneNumber) {
             return session.pairing;
         }
 
-        // Lock to prevent duplicate boot races
         if (session?.pairingInFlight) {
             throw new Error("Pairing already in progress for this session. Please wait.");
         }
@@ -223,7 +212,6 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
 
         session.pairingInFlight = true;
         try {
-            // Wait for socket to fully open (up to 30s)
             const deadline = Date.now() + 30_000;
             while (!session.socketReady && Date.now() < deadline) {
                 await new Promise(r => setTimeout(r, 500));
@@ -236,7 +224,6 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
             try {
                 code = await session.conn.requestPairingCode(phoneNumber);
             } catch (e) {
-                // One retry after a short pause (WA flakiness)
                 await new Promise(r => setTimeout(r, 2000));
                 code = await session.conn.requestPairingCode(phoneNumber);
             }
@@ -256,7 +243,7 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
     });
 }
 
-// ── HEALTH CHECK (used for Heroku keep-alive) ──
+// ── HEALTH CHECK ──
 app.get("/health", (_req, res) => {
     res.json({ ok: true, sessions: global.sessions.size, uptime: process.uptime() });
 });
@@ -264,10 +251,9 @@ app.get("/health", (_req, res) => {
 // ── API ROUTE ──
 app.post("/api/pair", async (req, res) => {
     const ip = req.ip || req.socket.remoteAddress || "unknown";
-
-    // Rate limit
     const now = Date.now();
     const last = pairAttempts.get(ip) || 0;
+    
     if (now - last < PAIR_COOLDOWN_MS) {
         const wait = Math.ceil((PAIR_COOLDOWN_MS - (now - last)) / 1000);
         return res.status(429).json({ error: `Please wait ${wait}s before trying again.` });
@@ -298,14 +284,13 @@ app.post("/api/pair", async (req, res) => {
     }
 });
 
-// ── LAUNCH SERVER (Heroku Ready) ──
+// ── LAUNCH SERVER ──
 const PORT = process.env.PORT || 3000;
 const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
 
     try {
         await initMongo();
-
         const collection = db.collection("authState");
         const hasSession = await collection.findOne({ _id: "main:creds" });
 
@@ -342,10 +327,11 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
-// ── HEROKU KEEP-ALIVE (native https — Node-version agnostic) ──
-if (process.env.HEROKU_APP_NAME || process.env.BASE_URL) {
-    const selfUrl = process.env.BASE_URL
-        || `https://${process.env.HEROKU_APP_NAME}.herokuapp.com`;
+// ── KEEP-ALIVE (Auto-detects your Heroku app URL) ──
+// If you don't have HEROKU_APP_NAME in vars, it defaults to your app name "lastkey"
+const appName = process.env.HEROKU_APP_NAME || "lastkey";
+if (process.env.BASE_URL || appName) {
+    const selfUrl = process.env.BASE_URL || `https://${appName}.herokuapp.com`;
     const client = selfUrl.startsWith('https:') ? https : http;
 
     const ping = () => {
