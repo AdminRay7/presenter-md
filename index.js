@@ -20,7 +20,9 @@ import { useMongoDBAuthState } from './lib/mongo-auth.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── BOT CONFIGURATION (All in one place) ──
+// ═════════════════════════════════
+// BOT IDENTITY & CONFIGURATION
+// ═════════════════════════════════
 const config = {
     botName: "303-XMD",
     tagline: "The Last Key",
@@ -32,10 +34,11 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // Legacy String to prevent DNS crash on Heroku
+    // Legacy MongoDB String (Bypasses DNS errors)
     mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
+// ── WEB SERVER ──
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -81,7 +84,7 @@ async function bootSocket() {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"), // Prevents ghost code
+        browser: Browsers.macOS("Safari"),
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -105,12 +108,14 @@ async function bootSocket() {
         if (connection === 'close') {
             socketReady = false;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+            // Only reconnect if we are not in the middle of wiping for a new pair
             if (shouldReconnect && !isPairing) {
                 console.log(chalk.yellow('[!] Connection closed. Reconnecting...'));
                 setTimeout(bootSocket, 5000);
             }
         } else if (connection === 'open') {
-            console.log(chalk.green(`\n[+] 303-XMD Connected Successfully!`));
+            console.log(chalk.green(`\n[+] ${config.botName} Connected Successfully!`));
+            console.log(chalk.yellow(`[+] Owner: ${config.ownerName}`));
             isPairing = false;
         }
     });
@@ -120,13 +125,25 @@ async function bootSocket() {
     });
 }
 
-// ── PAIRING LOGIC ──
+// ── PAIRING LOGIC (WIPES DB & FORCES NEW CODE) ──
 async function requestPairing(phoneNumber) {
     return enqueuePairing(async () => {
         await initMongo();
-        
-        if (!sock) await bootSocket();
-        if (sock.authState.creds.registered) throw new Error("Bot is already linked to a WhatsApp account.");
+
+        // 1. Force close existing socket
+        if (sock) {
+            try { sock.end(undefined); } catch(e) {}
+            sock = null;
+            socketReady = false;
+        }
+
+        // 2. Wipe the authState collection in MongoDB
+        const collection = db.collection('authState');
+        await collection.deleteMany({}); 
+        console.log(chalk.yellow(`[!] Auth state wiped. Generating fresh pair.`));
+
+        // 3. Boot fresh socket
+        await bootSocket();
 
         const deadline = Date.now() + 30000;
         while (!socketReady && Date.now() < deadline) {
