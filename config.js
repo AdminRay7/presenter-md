@@ -1,6 +1,4 @@
-import dotenv from 'dotenv';
-dotenv.config();
-
+// config.js
 export const config = {
     botName: "303-XMD",
     tagline: "The Last Key",
@@ -12,7 +10,7 @@ export const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    mongoURI: process.env.MONGO_URI || "mongodb+srv://ryanAdmin:3063ERay@cluster0.iy1gadk.mongodb.net/?appName=Cluster0",
-    jwtSecret: process.env.JWT_SECRET || "super_secret_303_key",
-    maxSessions: 10 // Limit concurrent WhatsApp connections
+    
+    // UPDATED: Standard MongoDB connection string
+    mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
