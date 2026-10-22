@@ -34,6 +34,7 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
+    // Legacy String to prevent DNS crash
     mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -67,7 +68,7 @@ async function initMongo() {
     }
 }
 
-// ── SOCKET BOOT (Extracted from your working example) ──
+// ── SOCKET BOOT ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
     await initMongo();
@@ -75,7 +76,7 @@ async function bootSocket(sessionId, session) {
     const collection = db.collection("authState");
     const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
     
-    // Magic Fix 1: Fetch absolute latest version
+    // Fetch the absolute latest version to prevent "Couldn't link device"
     const { version } = await fetchLatestWaWebVersion();
     console.log(chalk.cyan(`[+] [${sessionId}] WA version: ${JSON.stringify(version)}`));
 
@@ -86,8 +87,7 @@ async function bootSocket(sessionId, session) {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        // Magic Fix 2: Mimic macOS Safari
-        browser: Browsers.macOS("Safari"), 
+        browser: Browsers.macOS("Safari"), // Mimics Mac
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -139,7 +139,7 @@ async function bootSocket(sessionId, session) {
     return conn;
 }
 
-// ── PAIRING LOGIC (Extracted from your working example) ──
+// ── PAIRING LOGIC ──
 async function requestPairingCodeForSession(sessionId, phoneNumber) {
     return enqueuePairing(async () => {
         await initMongo();
@@ -199,13 +199,13 @@ app.get("/api/pair", async (req, res) => {
     }
 });
 
-// ── LAUNCH SERVER ──
-const PORT = process.env.PORT || 5000;
+// ── LAUNCH SERVER (PORT 3000) ──
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
     try {
         await initMongo();
     } catch (e) {
-        console.log(chalk.red(`[-] Failed to start bot automatically. Waiting for manual pair from web.`));
+        console.log(chalk.red(`[-] Failed to connect to DB. Waiting for manual pair.`));
     }
 });
