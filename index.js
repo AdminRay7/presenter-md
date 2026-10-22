@@ -20,13 +20,19 @@ import { useMongoDBAuthState } from './lib/mongo-auth.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// ── CONFIGURATION ──
+// ── BOT CONFIGURATION (All in one place) ──
 const config = {
     botName: "303-XMD",
+    tagline: "The Last Key",
+    version: "2.0.0",
+    prefix: ".",
     ownerName: "Mr Presenter",
     ownerNumber: "254794376595",
-    prefix: ".",
-    // Your MongoDB URL is now directly here
+    adminEmail: "ryanobanga243@gmail.com",
+    footer: "303-XMD — THE LAST KEY",
+    channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
+    newsletterJid: "120363430114825309@newsletter",
+    // Legacy String to prevent DNS crash on Heroku
     mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -75,7 +81,7 @@ async function bootSocket() {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"),
+        browser: Browsers.macOS("Safari"), // Prevents ghost code
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -105,7 +111,6 @@ async function bootSocket() {
             }
         } else if (connection === 'open') {
             console.log(chalk.green(`\n[+] 303-XMD Connected Successfully!`));
-            console.log(chalk.yellow(`[+] Owner: ${config.ownerName}`));
             isPairing = false;
         }
     });
@@ -177,6 +182,6 @@ app.listen(PORT, '0.0.0.0', async () => {
         await initMongo();
         await bootSocket();
     } catch (e) {
-        console.log(chalk.red(`[-] Failed to start bot automatically. Waiting for manual pair.`));
+        console.log(chalk.red(`[-] Failed to start bot automatically. Waiting for manual pair from web.`));
     }
 });
