@@ -13,7 +13,6 @@ import express from 'express';
 import path from 'path';
 import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'url';
-import jwt from 'jsonwebtoken';
 
 import { config } from './config.js';
 import { presenter } from './presenter.js';
@@ -28,10 +27,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── GLOBALS ──
 let mongoClient, db;
-global.sessions = new Map();
+let sock; // ONE single socket
+let socketReady = false;
+let isPairing = false;
 let pairingQueue = Promise.resolve();
 
-// Queue to prevent double pairing requests
 const enqueuePairing = (fn) => {
     const next = pairingQueue.then(fn, fn);
     pairingQueue = next.catch(() => {});
@@ -40,30 +40,33 @@ const enqueuePairing = (fn) => {
 
 // ── DATABASE INIT ──
 async function initMongo() {
-    if (db) return;
+    if (db) return db; // Return cached DB if already connected
     try {
         mongoClient = new MongoClient(config.mongoURI);
         await mongoClient.connect();
         db = mongoClient.db("xmd303");
         console.log(chalk.green(`[+] MongoDB Connected Successfully`));
+        return db;
     } catch (e) {
-        console.error(chalk.red(`[-] MongoDB Error: ${e.message}`));
+        console.error(chalk.red(`[-] MongoDB Connection Error: ${e.message}`));
+        throw e;
     }
 }
 
-// ── BOOT SOCKET ──
-async function bootSocket(sessionId, session) {
-    const { state, saveCreds } = await useMongoDBAuthState(db, sessionId);
-    const { version } = await fetchLatestWaWebVersion(); // Bypasses ghost codes
+// ── BOOT SINGLE SOCKET ──
+async function bootSocket() {
+    const database = await initMongo();
+    const { state, saveCreds } = await useMongoDBAuthState(database);
+    const { version } = await fetchLatestWaWebVersion();
 
-    const conn = makeWASocket({
+    sock = makeWASocket({
         version,
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"), // Mimics macOS Safari
+        browser: Browsers.macOS("Safari"),
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -75,100 +78,87 @@ async function bootSocket(sessionId, session) {
         emitOwnEvents: false
     });
 
-    session.conn = conn;
-    conn.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', saveCreds);
 
-    conn.ev.on('connection.update', (update) => {
+    sock.ev.on('connection.update', (update) => {
         const { connection, lastDisconnect } = update;
         
         if (connection === 'connecting') {
-            session.socketReady = true;
+            socketReady = true;
         }
 
         if (connection === 'close') {
-            session.socketReady = false;
+            socketReady = false;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                setTimeout(() => bootSocket(sessionId, session), 5000);
-            } else {
-                global.sessions.delete(sessionId);
+            if (shouldReconnect && !isPairing) {
+                console.log(chalk.yellow('[!] Connection closed. Reconnecting...'));
+                setTimeout(bootSocket, 5000);
             }
         } else if (connection === 'open') {
-            console.log(chalk.green(`[+] [${sessionId}] Connected Successfully!`));
+            console.log(chalk.green(`\n[+] 303-XMD Connected Successfully!`));
+            console.log(chalk.yellow(`[+] Owner: ${config.ownerName}`));
+            isPairing = false;
         }
     });
 
-    conn.ev.on('messages.upsert', async (m) => {
-        await presenter(conn, m, config);
+    sock.ev.on('messages.upsert', async (m) => {
+        await presenter(sock, m, config);
     });
 }
 
-// ── PAIRING LOGIC (The exact flow you provided) ──
-async function requestPairingCodeForSession(sessionId, phoneNumber) {
+// ── PAIRING LOGIC ──
+async function requestPairing(phoneNumber) {
     return enqueuePairing(async () => {
         await initMongo();
-        let session = global.sessions.get(sessionId);
+        
+        if (!sock) await bootSocket();
+        if (sock.authState.creds.registered) throw new Error("Bot is already linked to a WhatsApp account.");
 
-        if (session?.conn?.user) throw new Error("Session already paired");
-        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
-
-        if (!session) {
-            if (global.sessions.size >= config.maxSessions) {
-                throw new Error(`Server at capacity (${config.maxSessions})`);
-            }
-            session = { conn: null, socketReady: false, pairing: null, pairingNumber: null };
-            global.sessions.set(sessionId, session);
-            await bootSocket(sessionId, session);
-        }
-
-        // Wait for socket to become ready (30s timeout)
         const deadline = Date.now() + 30000;
-        while (!session.socketReady && Date.now() < deadline) {
+        while (!socketReady && Date.now() < deadline) {
             await new Promise(r => setTimeout(r, 500));
         }
-        if (!session.socketReady) throw new Error("Socket not ready, try again");
+        if (!socketReady) throw new Error("Socket not ready, try again");
 
-        // Request the code
+        isPairing = true;
         let code;
         try { 
-            code = await session.conn.requestPairingCode(phoneNumber); 
+            code = await sock.requestPairingCode(phoneNumber); 
         } catch { 
             await new Promise(r => setTimeout(r, 2000)); 
-            code = await session.conn.requestPairingCode(phoneNumber); 
+            code = await sock.requestPairingCode(phoneNumber); 
         }
 
         const formatted = code.match(/.{1,4}/g)?.join("-") || code;
-        session.pairing = formatted;
-        session.pairingNumber = phoneNumber;
-        console.log(chalk.green(`[+] [${sessionId}] pairing code: ${formatted}`));
+        console.log(chalk.green(`[+] Pairing code generated: ${formatted}`));
         return formatted;
     });
 }
 
 // ── API ROUTE ──
 app.get("/api/pair", async (req, res) => {
-    const sessionId = String(req.query.sessionId || "").trim();
     const num = String(req.query.num || "").replace(/\D/g, "");
 
-    if (!sessionId) return res.status(400).json({ error: "Missing sessionId" });
-    if (!num || num.length < 10 || num.length > 15) return res.status(400).json({ error: "Invalid phone number" });
-
-    // Optional: Verify JWT token here if you want to secure the API
-    // const token = req.headers.authorization?.split(" ")[1];
-    // if (!token) return res.status(401).json({ error: "Unauthorized" });
+    if (!num || num.length < 10 || num.length > 15) {
+        return res.status(400).json({ error: "Invalid phone number" });
+    }
 
     try {
-        const code = await requestPairingCodeForSession(sessionId, num);
+        // Ensure Mongo is connected before continuing
+        await initMongo(); 
+
+        const code = await requestPairing(num);
         
-        // Save to database as requested in your flow
+        // Save number to database
         await db.collection('SessionSettings').updateOne(
-            { sessionId },
+            { botId: '303-XMD' },
             { $set: { phoneNumber: num, updatedAt: new Date() } },
             { upsert: true }
         );
 
-        res.json({ success: true, sessionId, code });
+        res.json({ success: true, code });
     } catch (error) {
+        console.error(error);
         res.status(500).json({ error: error.message });
     }
 });
@@ -177,5 +167,12 @@ app.get("/api/pair", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
-    await initMongo();
+    // We try to init mongo and boot the socket at startup.
+    // If auth is in DB, it will auto-connect to WhatsApp.
+    try {
+        await initMongo();
+        await bootSocket();
+    } catch (e) {
+        console.log(chalk.red(`[-] Failed to start bot automatically. Waiting for manual pair.`));
+    }
 });
