@@ -14,6 +14,7 @@ import path from 'path';
 import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'url';
 
+// Assuming your handler is named presenter.js
 import { presenter } from './presenter.js';
 import { useMongoDBAuthState } from './lib/mongo-auth.js';
 
@@ -34,7 +35,7 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // Legacy MongoDB String (Bypasses DNS errors)
+    // The Legacy MongoDB String
     mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -75,7 +76,10 @@ async function initMongo() {
 async function bootSocket() {
     const database = await initMongo();
     const { state, saveCreds } = await useMongoDBAuthState(database);
+    
+    // FIX: Using fetchLatestWaWebVersion prevents "Couldn't link device"
     const { version } = await fetchLatestWaWebVersion();
+    console.log(chalk.cyan(`[+] Using WA Version: ${version.join('.')}`));
 
     sock = makeWASocket({
         version,
@@ -84,7 +88,7 @@ async function bootSocket() {
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
         },
         logger: pino({ level: "silent" }),
-        browser: Browsers.macOS("Safari"),
+        browser: Browsers.macOS("Safari"), // FIX: Mimics a real Mac
         syncFullHistory: false,
         markOnlineOnConnect: false,
         generateHighQualityLinkPreview: false,
@@ -108,13 +112,13 @@ async function bootSocket() {
         if (connection === 'close') {
             socketReady = false;
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            // Only reconnect if we are not in the middle of wiping for a new pair
+            
             if (shouldReconnect && !isPairing) {
-                console.log(chalk.yellow('[!] Connection closed. Reconnecting...'));
+                console.log(chalk.yellow('[!] Connection closed. Reconnecting in 5s...'));
                 setTimeout(bootSocket, 5000);
             }
         } else if (connection === 'open') {
-            console.log(chalk.green(`\n[+] ${config.botName} Connected Successfully!`));
+            console.log(chalk.green(`\n[+] 303-XMD Connected Successfully!`));
             console.log(chalk.yellow(`[+] Owner: ${config.ownerName}`));
             isPairing = false;
         }
@@ -130,14 +134,14 @@ async function requestPairing(phoneNumber) {
     return enqueuePairing(async () => {
         await initMongo();
 
-        // 1. Force close existing socket
+        // 1. Force close existing socket if it exists
         if (sock) {
             try { sock.end(undefined); } catch(e) {}
             sock = null;
             socketReady = false;
         }
 
-        // 2. Wipe the authState collection in MongoDB
+        // 2. Wipe the authState collection in MongoDB to allow fresh pairing
         const collection = db.collection('authState');
         await collection.deleteMany({}); 
         console.log(chalk.yellow(`[!] Auth state wiped. Generating fresh pair.`));
