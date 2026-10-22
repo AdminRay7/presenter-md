@@ -14,12 +14,21 @@ import path from 'path';
 import { MongoClient } from 'mongodb';
 import { fileURLToPath } from 'url';
 
-import { config } from './config.js';
 import { presenter } from './presenter.js';
 import { useMongoDBAuthState } from './lib/mongo-auth.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── CONFIGURATION ──
+const config = {
+    botName: "303-XMD",
+    ownerName: "Mr Presenter",
+    ownerNumber: "254794376595",
+    prefix: ".",
+    // Your MongoDB URL is now directly here
+    mongoURI: "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
+};
 
 const app = express();
 app.use(express.json());
@@ -27,7 +36,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ── GLOBALS ──
 let mongoClient, db;
-let sock; // ONE single socket
+let sock; 
 let socketReady = false;
 let isPairing = false;
 let pairingQueue = Promise.resolve();
@@ -40,7 +49,7 @@ const enqueuePairing = (fn) => {
 
 // ── DATABASE INIT ──
 async function initMongo() {
-    if (db) return db; // Return cached DB if already connected
+    if (db) return db;
     try {
         mongoClient = new MongoClient(config.mongoURI);
         await mongoClient.connect();
@@ -53,7 +62,7 @@ async function initMongo() {
     }
 }
 
-// ── BOOT SINGLE SOCKET ──
+// ── BOOT SOCKET ──
 async function bootSocket() {
     const database = await initMongo();
     const { state, saveCreds } = await useMongoDBAuthState(database);
@@ -144,12 +153,9 @@ app.get("/api/pair", async (req, res) => {
     }
 
     try {
-        // Ensure Mongo is connected before continuing
         await initMongo(); 
-
         const code = await requestPairing(num);
         
-        // Save number to database
         await db.collection('SessionSettings').updateOne(
             { botId: '303-XMD' },
             { $set: { phoneNumber: num, updatedAt: new Date() } },
@@ -167,8 +173,6 @@ app.get("/api/pair", async (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, '0.0.0.0', async () => {
     console.log(chalk.cyan(`[+] Web Dashboard running on port ${PORT}`));
-    // We try to init mongo and boot the socket at startup.
-    // If auth is in DB, it will auto-connect to WhatsApp.
     try {
         await initMongo();
         await bootSocket();
