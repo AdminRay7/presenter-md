@@ -1,3 +1,6 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 export const config = {
     botName: "303-XMD",
     tagline: "The Last Key",
@@ -9,8 +12,7 @@ export const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    
-    // If DNS fix worked, keep the SRV string. 
-    // If it still fails, copy the "Standard Connection String" (mongodb://...) from Atlas.
-    mongoURI: "mongodb+srv://ryanAdmin:3063ERay@cluster0.iy1gadk.mongodb.net/?appName=Cluster0" 
+    mongoURI: process.env.MONGO_URI || "mongodb+srv://ryanAdmin:3063ERay@cluster0.iy1gadk.mongodb.net/?appName=Cluster0",
+    jwtSecret: process.env.JWT_SECRET || "super_secret_303_key",
+    maxSessions: 10 // Limit concurrent WhatsApp connections
 };
