@@ -37,7 +37,6 @@ const config = {
     footer: "303-XMD — THE LAST KEY",
     channelLink: "https://whatsapp.com/channel/0029VbDUltrC6Zve91V0GW1u",
     newsletterJid: "120363430114825309@newsletter",
-    // Hardcoded fallback so you don't need Heroku Vars
     mongoURI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority"
 };
 
@@ -50,7 +49,7 @@ process.on("uncaughtException", (e) => {
 });
 
 const app = express();
-app.use(express.json({ limit: "64kb" }));
+app.use(express.json({ limit: "5mb" })); // Matching your working bot
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── GLOBALS ──
@@ -90,7 +89,6 @@ async function initMongo() {
 // ── SOCKET BOOT ──
 async function bootSocket(sessionId, session) {
     session.id = sessionId;
-    session.socketReady = false;
 
     await initMongo();
 
@@ -121,22 +119,19 @@ async function bootSocket(sessionId, session) {
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 60000,
         retryRequestDelayMs: 2000,
+        fireInitQueries: false, // MATCHING YOUR WORKING BOT
         emitOwnEvents: false
     });
 
     session.conn = conn;
-
     conn.ev.on("creds.update", saveCreds);
 
     conn.ev.on("connection.update", async (update) => {
         const { connection, lastDisconnect } = update;
 
         if (connection === "connecting") {
-            console.log(chalk.cyan(`[+] [${sessionId}] connecting...`));
-            // WAIT 5 SECONDS before marking ready to prevent 401 rejection
-            setTimeout(() => {
-                session.socketReady = true;
-            }, 5000);
+            session.socketReady = true; // MATCHING YOUR WORKING BOT
+            console.log(chalk.cyan(`[+] [${sessionId}] socket ready`));
         }
 
         if (connection === "open") {
@@ -188,14 +183,8 @@ async function requestPairingCodeForSession(sessionId, phoneNumber) {
         let session = global.sessions.get(sessionId);
 
         if (session?.conn?.user) throw new Error("Session already paired");
-
-        if (session?.pairing && session.pairingNumber === phoneNumber) {
-            return session.pairing;
-        }
-
-        if (session?.pairingInFlight) {
-            throw new Error("Pairing already in progress for this session. Please wait.");
-        }
+        if (session?.pairing && session.pairingNumber === phoneNumber) return session.pairing;
+        if (session?.pairingInFlight) throw new Error("Pairing already in progress for this session. Please wait.");
 
         if (!session) {
             session = {
