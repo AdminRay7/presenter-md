@@ -5,19 +5,22 @@ dns.setServers(['8.8.8.8', '8.8.4.4']);
 const makeWASocket = require("@whiskeysockets/baileys").default;
 const { Browsers, makeCacheableSignalKeyStore, fetchLatestWaWebVersion, DisconnectReason } = require("@whiskeysockets/baileys");
 const { MongoClient } = require("mongodb");
-const { useMongoDBAuthState } = require("./lib/mongoAuthState"); // Ensure this matches your file name
+const { useMongoDBAuthState } = require("./lib/mongoAuthState");
 const pino = require("pino");
 const chalk = require("chalk");
 const express = require("express");
 const path = require("path");
 const https = require("https");
 const http = require("http");
+const fs = require("fs");
+const crypto = require("crypto");
 
 // ============================================================
-//   WHATSAPP CONNECTION STRINGS
+//   SECURITY & CONFIGURATION
 // ============================================================
 const WA = {
-    DB_URI: process.env.MONGO_URI || "mongodb://ryanAdmin:3063ERay@ac-m1jdocr-shard-00-00.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-01.iylgadk.mongodb.net:27017,ac-m1jdocr-shard-00-02.iylgadk.mongodb.net:27017/?ssl=true&replicaSet=atlas-9cc0ub-shard-0&authSource=admin&retryWrites=true&w=majority",
+    // ✅ FIXED: Removed hardcoded password. MUST be in .env
+    DB_URI: process.env.MONGO_URI,
     DB_NAME: "xmd303",
     AUTH_COLLECTION: "authState",
     BROWSER: Browsers.macOS("Safari"),
@@ -37,17 +40,27 @@ const WA = {
     MAX_SESSIONS: 12
 };
 
+if (!WA.DB_URI) {
+    console.error(chalk.red("❌ FATAL: MONGO_URI is missing from .env file!"));
+    process.exit(1);
+}
+
 // ============================================================
 //   GLOBAL STATE
 // ============================================================
 global.sessions = new Map();
 global.mongoClient = null;
+global.__bootLocks = new Map(); // ✅ FIXED: Prevent double sockets
 
 let pairingQueue = Promise.resolve();
 function enqueuePairing(fn) {
     const next = pairingQueue.then(fn, fn);
     pairingQueue = next.catch(() => {});
     return next;
+}
+
+function escapeRegex(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 // ============================================================
@@ -66,101 +79,124 @@ async function initMongo() {
 //   SOCKET BOOT
 // ============================================================
 async function bootSocket(sessionId, session) {
-    session.id = sessionId;
-
-    const collection = await initMongo();
-    const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
-    
-    let version;
-    try {
-        ({ version } = await fetchLatestWaWebVersion());
-    } catch (e) {
-        version = [2, 3000, 1023223821]; // Fallback
+    // ✅ FIXED: Mutex lock to prevent double connections
+    if (global.__bootLocks.has(sessionId)) {
+        return global.__bootLocks.get(sessionId);
     }
 
-    console.log(chalk.cyan(`[${sessionId}] WA version: ${JSON.stringify(version)}`));
+    const p = (async () => {
+        session.id = sessionId;
 
-    const conn = makeWASocket({
-        version,
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
-        },
-        logger: pino({ level: "silent" }),
-        browser: WA.BROWSER,
-        ...WA.SOCKET_OPTIONS
-    });
-
-    session.conn = conn;
-    conn.ev.on("creds.update", saveCreds);
-
-    conn.ev.on("connection.update", async (update) => {
-        const { connection, lastDisconnect } = update;
-
-        if (connection === "connecting") {
-            session.socketReady = true;
-            console.log(chalk.cyan(`🔌 [${sessionId}] socket ready`));
-        }
-
-        if (connection === "open") {
-            session.socketReady = true;
-            session.pairing = null;
-            session.pairingNumber = null;
-            console.log(chalk.green(`✅ [${sessionId}] connected as ${conn.user?.id}`));
-
+        // ✅ FIXED: Close old socket if it exists
+        if (session.conn) {
             try {
-                await collection.updateOne(
-                    { _id: `${sessionId}:meta` },
-                    { $set: { value: { jid: conn.user?.id, linkedAt: Date.now() } } },
-                    { upsert: true }
-                );
+                session.conn.ev.removeAllListeners();
+                session.conn.ws?.close();
             } catch {}
-
-            try {
-                const realPhone = conn.user?.id?.split(":")[0]?.split("@")[0] || null;
-                if (realPhone) {
-                    const db = global.mongoClient.db(WA.DB_NAME);
-                    await db.collection("SessionSettings").updateOne({ sessionId }, { $set: { phoneNumber: realPhone } }, { upsert: true });
-                }
-            } catch (e) { console.error(`[${sessionId}] phone save error:`, e.message); }
-        }
-
-        if (connection === "close") {
+            session.conn = null;
             session.socketReady = false;
-            const code = lastDisconnect?.error?.output?.statusCode;
-            console.log(chalk.red(`❌ [${sessionId}] closed (${code})`));
-
-            if (session._paused) return;
-
-            if (code === 401) {
-                await logoutSession(sessionId);
-                return;
-            }
-            if (code === 440) return;
-
-            setTimeout(() => {
-                if (!global.sessions.has(sessionId)) return;
-                if (session._paused) return;
-                bootSocket(sessionId, session).catch(e => console.error(`Reconnect ${sessionId}:`, e.message));
-            }, WA.RECONNECT_DELAY_MS);
         }
-    });
 
-    conn.ev.on("messages.upsert", async (m) => {
+        const collection = await initMongo();
+        const { state, saveCreds } = await useMongoDBAuthState(collection, sessionId);
+
+        let version;
         try {
-            // If you have a handler.js, use it here, otherwise use presenter
-            if (require("fs").existsSync("./handler.js")) {
-                require("./handler")(conn, m, sessionId);
-            } else {
-                const { presenter } = require("./presenter.js");
-                await presenter(conn, m);
-            }
-        } catch (err) {
-            console.error(`[${sessionId}] message error:`, err);
+            ({ version } = await fetchLatestWaWebVersion());
+        } catch (e) {
+            version = [2, 3000, 1023223821]; // Fallback
         }
-    });
 
-    return conn;
+        console.log(chalk.cyan(`[${sessionId}] WA version: ${JSON.stringify(version)}`));
+
+        const conn = makeWASocket({
+            version,
+            auth: {
+                creds: state.creds,
+                keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" }))
+            },
+            logger: pino({ level: "silent" }),
+            browser: WA.BROWSER,
+            ...WA.SOCKET_OPTIONS
+        });
+
+        session.conn = conn;
+        conn.ev.on("creds.update", saveCreds);
+
+        conn.ev.on("connection.update", async (update) => {
+            const { connection, lastDisconnect } = update;
+
+            if (connection === "connecting") {
+                session.socketReady = true;
+                console.log(chalk.cyan(`🔌 [${sessionId}] socket ready`));
+            }
+
+            if (connection === "open") {
+                session.socketReady = true;
+                session.pairing = null;
+                session.pairingNumber = null;
+                console.log(chalk.green(`✅ [${sessionId}] connected as ${conn.user?.id}`));
+
+                try {
+                    await collection.updateOne(
+                        { _id: `${sessionId}:meta` },
+                        { $set: { value: { jid: conn.user?.id, linkedAt: Date.now() } } },
+                        { upsert: true }
+                    );
+                } catch {}
+
+                try {
+                    const realPhone = conn.user?.id?.split(":")[0]?.split("@")[0] || null;
+                    if (realPhone) {
+                        const db = global.mongoClient.db(WA.DB_NAME);
+                        await db.collection("SessionSettings").updateOne({ sessionId }, { $set: { phoneNumber: realPhone } }, { upsert: true });
+                    }
+                } catch (e) { console.error(`[${sessionId}] phone save error:`, e.message); }
+            }
+
+            if (connection === "close") {
+                session.socketReady = false;
+                const code = lastDisconnect?.error?.output?.statusCode;
+                console.log(chalk.red(`❌ [${sessionId}] closed (${code})`));
+
+                if (session._paused) return;
+
+                if (code === 401) {
+                    await logoutSession(sessionId);
+                    return;
+                }
+                if (code === 440) {
+                    global.sessions.delete(sessionId);
+                    return;
+                }
+
+                setTimeout(() => {
+                    if (!global.sessions.has(sessionId)) return;
+                    if (session._paused) return;
+                    bootSocket(sessionId, session).catch(e => console.error(`Reconnect ${sessionId}:`, e.message));
+                }, WA.RECONNECT_DELAY_MS);
+            }
+        });
+
+        conn.ev.on("messages.upsert", async (m) => {
+            try {
+                if (fs.existsSync("./handler.js")) {
+                    require("./handler")(conn, m, sessionId);
+                } else {
+                    const { presenter } = require("./presenter.js");
+                    await presenter(conn, m);
+                }
+            } catch (err) {
+                console.error(`[${sessionId}] message error:`, err);
+            }
+        });
+
+        return conn;
+    })();
+
+    global.__bootLocks.set(sessionId, p);
+    p.finally(() => global.__bootLocks.delete(sessionId));
+    return p;
 }
 
 // ============================================================
@@ -228,7 +264,9 @@ async function logoutSession(sessionId) {
     }
     try {
         const collection = await initMongo();
-        await collection.deleteMany({ _id: { $regex: `^${sessionId}:` } });
+        // ✅ FIXED: Regex escape to prevent injection
+        const safeId = escapeRegex(sessionId);
+        await collection.deleteMany({ _id: { $regex: `^${safeId}:` } });
     } catch {}
 }
 
@@ -275,7 +313,26 @@ app.get("/health", (_req, res) => {
     res.json({ ok: true, sessions: global.sessions.size, uptime: process.uptime() });
 });
 
-// API Route for pairing (Matches your index.html)
+// ✅ FIXED: Added missing API routes so your dashboard doesn't break
+app.get("/api/status", (_req, res) => {
+    let active = 0;
+    for (const [, s] of global.sessions) if (s.conn?.user) active++;
+    res.json({ connected: active > 0, sessions: global.sessions.size, maxSessions: WA.MAX_SESSIONS });
+});
+
+app.get("/api/stats", async (_req, res) => {
+    try {
+        const db = global.mongoClient.db(WA.DB_NAME);
+        const users = await db.collection("accounts").countDocuments();
+        let active = 0;
+        for (const [, s] of global.sessions) if (s.conn?.user) active++;
+        res.json({ accounts: users, totalSessions: global.sessions.size, activeSessions: active });
+    } catch {
+        res.json({ accounts: 0, totalSessions: 0, activeSessions: 0 });
+    }
+});
+
+// API Route for pairing
 app.post("/api/pair", async (req, res) => {
     const sessionId = String(req.body?.sessionId || "main").trim();
     const num = String(req.body?.num || "").replace(/\D/g, "");
@@ -286,8 +343,7 @@ app.post("/api/pair", async (req, res) => {
 
     try {
         const code = await requestPairingCodeForSession(sessionId, num);
-        
-        // Save phone to DB
+
         const db = global.mongoClient.db(WA.DB_NAME);
         await db.collection('SessionSettings').updateOne(
             { sessionId },
@@ -332,8 +388,9 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 
+// Keep-alive ping for Heroku/Render
 const appName = process.env.HEROKU_APP_NAME || "lastkey";
-if (process.env.BASE_URL || appName) {
+if (process.env.BASE_URL || process.env.HEROKU_APP_NAME) {
     const selfUrl = process.env.BASE_URL || `https://${appName}.herokuapp.com`;
     const client = selfUrl.startsWith('https:') ? https : http;
 
@@ -344,5 +401,5 @@ if (process.env.BASE_URL || appName) {
         });
         req.on('error', () => {});
         req.setTimeout(15000, () => req.destroy());
-    }, 20 * 60 * 1000);
+    }, 10 * 60 * 1000); // ✅ FIXED: Changed to 10 minutes to prevent Heroku sleeping
 }
