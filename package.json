@@ -4,19 +4,41 @@
   "description": "303-XMD — The Last Key",
   "main": "index.js",
   "scripts": {
-    "start": "node --max-old-space-size=460 --enable-source-maps --expose-gc index.js"
+    "start": "node --max-old-space-size=1024 --enable-source-maps --expose-gc index.js",
+    "dev": "node --watch --max-old-space-size=1024 --enable-source-maps --expose-gc index.js",
+    "postinstall": "node -e \"try{require('child_process').execSync('pip3 install --user --break-system-packages yt-dlp',{stdio:'inherit'})}catch{try{require('child_process').execSync('pip3 install --user yt-dlp',{stdio:'inherit'})}catch{console.log('yt-dlp install skipped')}}\"",
+    "check-baileys": "node -e \"const b=require('@whiskeysockets/baileys');console.log('fetchLatestWaWebVersion:',typeof b.fetchLatestWaWebVersion,'fetchLatestBaileysVersion:',typeof b.fetchLatestBaileysVersion)\""
   },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "baileys",
+    "newsletter",
+    "303-xmd"
+  ],
   "author": "mr presenter",
   "license": "MIT",
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.9",
+    "@hapi/boom": "^10.0.1",
+    "@whiskeysockets/baileys": "6.7.24",
+    "axios": "^1.7.7",
+    "bcryptjs": "^2.4.3",
     "chalk": "^4.1.2",
+    "compression": "^1.7.4",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "mongodb": "^6.7.0",
+    "express": "^4.21.0",
+    "express-rate-limit": "^7.4.0",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "fluent-ffmpeg": "^2.1.3",
+    "fs-extra": "^11.2.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.9.0",
+    "mongoose": "^8.7.0",
     "pino": "^8.0.0"
   },
   "engines": {
-    "node": "20.x"
+    "node": ">=20.0.0"
   }
 }
